@@ -1,4 +1,5 @@
-SIMPLE AND SAFE HYPER OPTIMIZED ERC20 Foundry project. No libraries, Copy pastable super cheap to deploy compliant ERC20 token.
+SIMPLE&SAFE HYPER OPTIMIZED ERC20. No libraries, Copy pastable super cheap to deploy FULLY compliant ERC20 token.
+80% less gas to deploy. Change name, symbol, and supply. Supply is minted to deployer/msg.sender .
 
 ## Contracts
 
