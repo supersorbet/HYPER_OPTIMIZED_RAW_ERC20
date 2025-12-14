@@ -1,17 +1,12 @@
-SIMPLE&SAFE HYPER OPTIMIZED ERC20. No libraries, Copy pastable FULLY compliant ERC20 token.
-80% less gas to deploy. Change name, symbol, and supply. Supply is minted to deployer/msg.sender .
-
-## Contracts
+## SIMPLE&SAFE HYPER OPTIMIZED ERC20. No libraries, Copy pastable FULLY compliant ERC20 token.
+## 80% less gas to deploy. Change name, symbol, and supply. Supply is minted to deployer/msg.sender .
 
 ## Setup
 
 ```bash
-# Install Foundry (if not already installed)
+# Install Foundry (Or copy paste as a file in Remix IDE)
 curl -L https://foundry.paradigm.xyz | bash
 foundryup
-
-# Install dependencies
-forge install vectorized/solady
 
 # Build
 forge build
