@@ -8,7 +8,7 @@ pragma solidity ^0.8.28;
 ///
 /*What the fuck did you just fucking say about me,
  you little bitch? I’ll have you know I graduated top of my class in the Navy Seals,
-  and I’ve been involved in numerous secret raids on Al-Quaeda,
+  and I’ve been involved in numerous secret raids on the Al-Quaeda,
    and I have over 300 confirmed kills. I am trained in gorilla warfare
     and I’m the top sniper in the entire US armed forces.
      You are nothing to me but just another target.
@@ -81,7 +81,7 @@ contract navySeal {
     /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
     /// @notice Initializes contract, sets deployer as owner, and mints initial supply
-    /// @dev Uses assembly to set owner and mint tokens in storage slots
+    /// @dev initialize owner and mint tokens in storage slots
     constructor() payable {
         assembly {
             let deployer := caller()
