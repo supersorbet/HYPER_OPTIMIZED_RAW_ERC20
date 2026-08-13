@@ -2,33 +2,9 @@
 pragma solidity ^0.8.28;
 
 /// @title 1️⃣️3️⃣️3️⃣️7️⃣️
-/// @notice A HYPER OPTIMIZED RAW FULLY COMPLIANT ERC20 TOKEN. COPY PASTE AS YOU WISH.
-/// @notice 80% less gas to deploy.
+/// @notice OPTIMIZED ERC20 + EIP-2612 PERMIT + EIP-3009 TRANSFER_WITH_AUTHORIZATION
 /// @author sorbet
-///
-/*What the fuck did you just fucking say about me,
- you little bitch? I’ll have you know I graduated top of my class in the Navy Seals,
-  and I’ve been involved in numerous secret raids on the Al-Quaeda,
-   and I have over 300 confirmed kills. I am trained in gorilla warfare
-    and I’m the top sniper in the entire US armed forces.
-     You are nothing to me but just another target.
-     I will wipe you the fuck out with precision the likes
-     of which has never been seen before on this Earth, mark my fucking words.
-      You think you can get away with saying that shit to me over the Internet?
-       Think again, fucker. As we speak I am contacting my secret network of spies
-        across the USA and your IP is being traced right now so you better prepare for the storm,
-         maggot. The storm that wipes out the pathetic little thing you call your “life”.
-          You’re fucking dead, kid. I can be anywhere, anytime,
-           and I can kill you in over seven hundred ways, and that’s just with my bare hands.
-           Not only am I extensively trained in unarmed combat,
-            but I have access to the entire arsenal of the United States Marine Corps
-            and I will use it to its full extent to wipe your miserable ass off the face of the continent,
-             you little shit.
-              If only you could have known what unholy retribution your little “clever”
-               comment was about to bring down upon you, maybe you would have held your fucking tongue.
-                But you couldn’t, you didn’t,
-                and now you’re paying the price, you goddamn idiot.
-                I will shit fury all over you and you will drown in it. You’re fucking dead, kiddo.*/
+
 contract navySeal {
     /// @dev Thrown when caller is not authorized for owner-only functions
     error Unauthorized();
@@ -40,6 +16,20 @@ contract navySeal {
     error InsufficientAllowance();
     /// @dev Thrown when attempting to transfer to or from zero address
     error InvalidAddress();
+    /// @dev Thrown when permit deadline has passed
+    error PermitExpired();
+    /// @dev Thrown when signature is invalid
+    error InvalidSignature();
+    /// @dev Thrown when nonce has already been used
+    error InvalidNonce();
+    /// @dev Thrown when authorization is not yet valid
+    error AuthorizationNotYetValid();
+    /// @dev Thrown when authorization has expired
+    error AuthorizationExpired();
+    /// @dev Thrown when authorization has already been used or cancelled
+    error AuthorizationAlreadyUsed();
+    /// @dev Thrown when attempting to decrease allowance below zero
+    error AllowanceBelowZero();
 
     /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
     /*                          CONSTANTS                         */
@@ -51,7 +41,20 @@ contract navySeal {
     string public constant symbol = unicode"N4VY S34L";
     /// @notice Number of decimals for token amounts
     uint8 public constant decimals = 18;
-    uint256 public immutable INITIAL_SUPPLY;
+    /// @notice Domain separator for EIP-712 signatures
+    bytes32 public immutable DOMAIN_SEPARATOR;
+    /// @notice Typehash for permit (EIP-2612)
+    bytes32 public constant PERMIT_TYPEHASH =
+        keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
+    /// @notice Typehash for transferWithAuthorization (EIP-3009)
+    bytes32 public constant TRANSFER_WITH_AUTHORIZATION_TYPEHASH =
+        keccak256("TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)");
+    /// @notice Typehash for receiveWithAuthorization (EIP-3009)
+    bytes32 public constant RECEIVE_WITH_AUTHORIZATION_TYPEHASH =
+        keccak256("ReceiveWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)");
+    /// @notice Typehash for cancelAuthorization (EIP-3009)
+    bytes32 public constant CANCEL_AUTHORIZATION_TYPEHASH =
+        keccak256("CancelAuthorization(address authorizer,bytes32 nonce)");
 
     /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
     /*                           STORAGE                          */
@@ -69,6 +72,12 @@ contract navySeal {
     /// @notice Allowance granted by owner to spender
     /// @dev Storage slot 3 - mapping(address => mapping(address => uint256))
     mapping(address => mapping(address => uint256)) public allowance;
+    /// @notice Nonces for EIP-2612 permit
+    /// @dev Storage slot 4 - mapping(address => uint256)
+    mapping(address => uint256) public nonces;
+    /// @notice Authorization state for EIP-3009
+    /// @dev Storage slot 5 - mapping(address => mapping(bytes32 => bool))
+    mapping(address => mapping(bytes32 => bool)) public authorizationState;
 
     /// @dev Restricts function access to contract owner only
     modifier onlyOwner() {
@@ -80,8 +89,6 @@ contract navySeal {
     /*                         CONSTRUCTOR                        */
     /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-    /// @notice Initializes contract, sets deployer as owner, and mints initial supply
-    /// @dev initialize owner and mint tokens in storage slots
     constructor() payable {
         assembly {
             let deployer := caller()
@@ -99,156 +106,60 @@ contract navySeal {
             ///Emit Transfer(address(0), deployer, initialSupply)
             mstore(0x00, initialSupply)
             log3(
-                0x00, ///data offset
-                0x20, ///data length
-                0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,
-                0, ///from = address(0)
-                deployer ///to   = deployer
-            )
-        }
-    }
-
-    /// @notice Transfers tokens from caller to recipient
-    /// @dev Uses assembly for gas-optimized execution with overflow checks
-    /// @param to Recipient address
-    /// @param amount Amount of tokens to transfer
-    /// @return success True if transfer succeeded
-    function transfer(
-        address to,
-        uint256 amount
-    ) public virtual returns (bool success) {
-        assembly {
-            ///Cache caller for gas savings
-            let sender := caller()
-            ///Revert if recipient is zero address
-            if iszero(to) {
-                mstore(0x00, 0xc5723b51) ///InvalidAddress()
-                revert(0x1c, 0x04)
-            }
-            ///Load sender balance: keccak256(abi.encode(sender, 2))
-            mstore(0x00, sender)
-            mstore(0x20, 2)
-            let senderBalanceSlot := keccak256(0x00, 0x40)
-            let senderBalance := sload(senderBalanceSlot)
-            ///Revert if insufficient balance
-            if gt(amount, senderBalance) {
-                mstore(0x00, 0xf4d678b8) ///InsufficientBalance()
-                revert(0x1c, 0x04)
-            }
-            ///Update sender balance (checked math via gt above)
-            sstore(senderBalanceSlot, sub(senderBalance, amount))
-            ///Load and update recipient balance: keccak256(abi.encode(to, 2))
-            mstore(0x00, to)
-            mstore(0x20, 2)
-            let recipientBalanceSlot := keccak256(0x00, 0x40)
-            ///Add and store the updated balance of `to`.
-            ///Will not overflow because the sum of all user balances
-            ///cannot exceed the maximum uint256 value.
-            sstore(
-                recipientBalanceSlot,
-                add(sload(recipientBalanceSlot), amount)
-            )
-            ///Emit Transfer(sender, to, amount)
-            mstore(0x00, amount)
-            log3(
                 0x00,
                 0x20,
                 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,
-                sender,
-                to
+                0,
+                deployer
             )
         }
+
+        /// Compute and store DOMAIN_SEPARATOR for EIP-712
+        /// DOMAIN_SEPARATOR = keccak256(abi.encode(
+        ///     keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+        ///     keccak256(bytes(name)),
+        ///     keccak256(bytes("1")),
+        ///     block.chainid,
+        ///     address(this)
+        /// ))
+        DOMAIN_SEPARATOR = keccak256(
+            abi.encode(
+                keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"),
+                keccak256(bytes(name)),
+                keccak256(bytes("1")),
+                block.chainid,
+                address(this)
+            )
+        );
+    }
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                       CORE ERC20                           */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    function transfer(address to, uint256 amount) public virtual returns (bool success) {
+        _transfer(msg.sender, to, amount);
         return true;
     }
 
-    /// @notice Transfers tokens from one address to another using allowance
-    /// @dev Supports infinite approval pattern (max uint256 allowance is not decreased)
-    /// @param from Token owner address
-    /// @param to Recipient address
-    /// @param amount Amount of tokens to transfer
-    /// @return success True if transfer succeeded
-    function transferFrom(
-        address from,
-        address to,
-        uint256 amount
-    ) public virtual returns (bool success) {
-        assembly {
-            let spender := caller()
-            ///Revert if from or to is zero address
-            if iszero(from) {
-                mstore(0x00, 0xc5723b51) ///InvalidAddress()
-                revert(0x1c, 0x04)
-            }
-            if iszero(to) {
-                mstore(0x00, 0xc5723b51) ///InvalidAddress()
-                revert(0x1c, 0x04)
-            }
-            ///Compute allowance slot: keccak256(spender, keccak256(from, 3))
-            mstore(0x00, from)
-            mstore(0x20, 3)
-            let innerSlot := keccak256(0x00, 0x40)
-            mstore(0x00, spender)
-            mstore(0x20, innerSlot)
-            let allowanceSlot := keccak256(0x00, 0x40)
-            let currentAllowance := sload(allowanceSlot)
-            ///Check and update allowance (skip if max uint256 for infinite approval)
-            if iszero(
-                eq(
-                    currentAllowance,
-                    0xffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
-                )
-            ) {
-                if lt(currentAllowance, amount) {
-                    mstore(0x00, 0x13be252b) ///InsufficientAllowance()
-                    revert(0x1c, 0x04)
-                }
-                sstore(allowanceSlot, sub(currentAllowance, amount))
-            }
-            ///Load from balance: keccak256(abi.encode(from, 2))
-            mstore(0x00, from)
-            mstore(0x20, 2)
-            let fromBalanceSlot := keccak256(0x00, 0x40)
-            let fromBalance := sload(fromBalanceSlot)
-            ///Revert if insufficient balance
-            if lt(fromBalance, amount) {
-                mstore(0x00, 0xf4d678b8) ///InsufficientBalance()
-                revert(0x1c, 0x04)
-            }
-            ///Update from balance
-            sstore(fromBalanceSlot, sub(fromBalance, amount))
-            ///Load and update recipient balance: keccak256(abi.encode(to, 2))
-            mstore(0x00, to)
-            mstore(0x20, 2)
-            let toBalanceSlot := keccak256(0x00, 0x40)
-            ///Add and store the updated balance of `to`.
-            ///Will not overflow because the sum of all user balances
-            ///cannot exceed the maximum uint256 value.
-            sstore(toBalanceSlot, add(sload(toBalanceSlot), amount))
-            ///Emit Transfer(from, to, amount)
-            mstore(0x00, amount)
-            log3(
-                0x00,
-                0x20,
-                0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,
-                from,
-                to
-            )
-        }
+    function transferFrom(address from, address to, uint256 amount) public virtual returns (bool success) {
+        _spendAllowance(from, msg.sender, amount);
+        _transfer(from, to, amount);
         return true;
     }
 
-    /// @notice Approves spender to transfer tokens on behalf of caller
-    /// @dev Setting amount to max uint256 creates infinite approval
-    /// @param spender Address authorized to spend tokens
-    /// @param amount Maximum amount spender can transfer
-    /// @return success True if approval succeeded
-    function approve(
-        address spender,
-        uint256 amount
-    ) public virtual returns (bool success) {
+    function approve(address spender, uint256 amount) public virtual returns (bool success) {
+        _approve(msg.sender, spender, amount);
+        return true;
+    }
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                    SAFE ALLOWANCE OPS                      */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    function increaseAllowance(address spender, uint256 addedValue) public virtual returns (bool success) {
         assembly {
             let owner_ := caller()
-
             ///Compute allowance slot: keccak256(spender, keccak256(owner, 3))
             mstore(0x00, owner_)
             mstore(0x20, 3)
@@ -256,12 +167,47 @@ contract navySeal {
             mstore(0x00, spender)
             mstore(0x20, innerSlot)
             let allowanceSlot := keccak256(0x00, 0x40)
+            let currentAllowance := sload(allowanceSlot)
+            let newAllowance := add(currentAllowance, addedValue)
+            ///Overflow check: if newAllowance < currentAllowance, overflow occurred
+            if lt(newAllowance, currentAllowance) {
+                mstore(0x00, 0xe5cfe957) ///TotalSupplyOverflow() pattern
+                revert(0x1c, 0x04)
+            }
+            sstore(allowanceSlot, newAllowance)
+            ///Emit Approval(owner, spender, newAllowance)
+            mstore(0x00, newAllowance)
+            log3(
+                0x00,
+                0x20,
+                0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925,
+                owner_,
+                spender
+            )
+        }
+        return true;
+    }
 
-            ///Store allowance
-            sstore(allowanceSlot, amount)
-
-            ///Emit Approval(owner, spender, amount)
-            mstore(0x00, amount)
+    function decreaseAllowance(address spender, uint256 subtractedValue) public virtual returns (bool success) {
+        assembly {
+            let owner_ := caller()
+            ///Compute allowance slot: keccak256(spender, keccak256(owner, 3))
+            mstore(0x00, owner_)
+            mstore(0x20, 3)
+            let innerSlot := keccak256(0x00, 0x40)
+            mstore(0x00, spender)
+            mstore(0x20, innerSlot)
+            let allowanceSlot := keccak256(0x00, 0x40)
+            let currentAllowance := sload(allowanceSlot)
+            ///Revert if trying to decrease below zero
+            if lt(currentAllowance, subtractedValue) {
+                mstore(0x00, 0x9e5cc52e) ///AllowanceBelowZero()
+                revert(0x1c, 0x04)
+            }
+            let newAllowance := sub(currentAllowance, subtractedValue)
+            sstore(allowanceSlot, newAllowance)
+            ///Emit Approval(owner, spender, newAllowance)
+            mstore(0x00, newAllowance)
             log3(
                 0x00,
                 0x20,
@@ -274,145 +220,181 @@ contract navySeal {
     }
 
     /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                         MINT / BURN                        */
+    /*                      EIP-2612 PERMIT                       */
     /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-    /// @notice Mints new tokens to specified address
-    /// @dev Only callable by owner. Increases total supply
-    /// @param to Recipient address for minted tokens
-    /// @param amount Amount of tokens to mint
-    function mint(address to, uint256 amount) public onlyOwner {
+    function permit(
+        address owner_,
+        address spender,
+        uint256 value,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) public virtual {
+        ///Check deadline
+        if (block.timestamp > deadline) revert PermitExpired();
+
+        ///Get and increment nonce
+        uint256 nonce = nonces[owner_];
+        nonces[owner_] = nonce + 1;
+
+        ///Compute digest: keccak256(abi.encodePacked("\\x19\\x01", DOMAIN_SEPARATOR, structHash))
+        ///structHash = keccak256(abi.encode(PERMIT_TYPEHASH, owner, spender, value, nonce, deadline))
+        bytes32 structHash = keccak256(
+            abi.encode(PERMIT_TYPEHASH, owner_, spender, value, nonce, deadline)
+        );
+        bytes32 digest = keccak256(abi.encodePacked("\\x19\\x01", DOMAIN_SEPARATOR, structHash));
+
+        ///Recover signer
+        address recovered = ecrecover(digest, v, r, s);
+        if (recovered == address(0) || recovered != owner_) revert InvalidSignature();
+
+        _approve(owner_, spender, value);
+    }
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                     EIP-3009 AUTHORIZATION                 */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    function transferWithAuthorization(
+        address from,
+        address to,
+        uint256 value,
+        uint256 validAfter,
+        uint256 validBefore,
+        bytes32 nonce,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external virtual {
+        _requireValidAuthorization(from, nonce, validAfter, validBefore);
+
+        bytes32 structHash = keccak256(
+            abi.encode(TRANSFER_WITH_AUTHORIZATION_TYPEHASH, from, to, value, validAfter, validBefore, nonce)
+        );
+        _validateSignature(from, structHash, v, r, s);
+
+        _markAuthorizationAsUsed(from, nonce);
+        _transfer(from, to, value);
+    }
+
+    function receiveWithAuthorization(
+        address from,
+        address to,
+        uint256 value,
+        uint256 validAfter,
+        uint256 validBefore,
+        bytes32 nonce,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external virtual {
+        if (to != msg.sender) revert InvalidAddress();
+        _requireValidAuthorization(from, nonce, validAfter, validBefore);
+
+        bytes32 structHash = keccak256(
+            abi.encode(RECEIVE_WITH_AUTHORIZATION_TYPEHASH, from, to, value, validAfter, validBefore, nonce)
+        );
+        _validateSignature(from, structHash, v, r, s);
+
+        _markAuthorizationAsUsed(from, nonce);
+        _transfer(from, to, value);
+    }
+
+    function cancelAuthorization(
+        address authorizer,
+        bytes32 nonce,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external virtual {
+        bytes32 structHash = keccak256(
+            abi.encode(CANCEL_AUTHORIZATION_TYPEHASH, authorizer, nonce)
+        );
+        _validateSignature(authorizer, structHash, v, r, s);
+
+        _markAuthorizationAsUsed(authorizer, nonce);
+        emit AuthorizationCanceled(authorizer, nonce);
+    }
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                    INTERNAL HELPERS                        */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    function _transfer(address from, address to, uint256 amount) internal virtual {
         assembly {
-            ///Revert if recipient is zero address
+            ///Revert if from or to is zero address
+            if iszero(from) {
+                mstore(0x00, 0xc5723b51) ///InvalidAddress()
+                revert(0x1c, 0x04)
+            }
             if iszero(to) {
                 mstore(0x00, 0xc5723b51) ///InvalidAddress()
                 revert(0x1c, 0x04)
             }
-
-            ///Update total supply with overflow check
-            let totalSupplyBefore := sload(0x00)
-            let totalSupplyAfter := add(totalSupplyBefore, amount)
-            ///Revert if the total supply overflows
-            if lt(totalSupplyAfter, totalSupplyBefore) {
-                mstore(0x00, 0xe5cfe957) ///`TotalSupplyOverflow()`.
+            ///Load from balance: keccak256(abi.encode(from, 2))
+            mstore(0x00, from)
+            mstore(0x20, 2)
+            let fromBalanceSlot := keccak256(0x00, 0x40)
+            let fromBalance := sload(fromBalanceSlot)
+            ///Revert if insufficient balance
+            if lt(fromBalance, amount) {
+                mstore(0x00, 0xf4d678b8) ///InsufficientBalance()
                 revert(0x1c, 0x04)
             }
-            sstore(0x00, totalSupplyAfter)
-
-            ///Update recipient balance: keccak256(abi.encode(to, 2))
+            ///Update from balance
+            sstore(fromBalanceSlot, sub(fromBalance, amount))
+            ///Load and update recipient balance: keccak256(abi.encode(to, 2))
             mstore(0x00, to)
             mstore(0x20, 2)
             let toBalanceSlot := keccak256(0x00, 0x40)
-            ///Add and store the updated balance.
-            ///Will not overflow because we just checked total supply.
             sstore(toBalanceSlot, add(sload(toBalanceSlot), amount))
-
-            ///Emit Transfer(address(0), to, amount)
+            ///Emit Transfer(from, to, amount)
             mstore(0x00, amount)
             log3(
                 0x00,
                 0x20,
                 0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,
-                0x0000000000000000000000000000000000000000,
+                from,
                 to
             )
         }
     }
 
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                         OWNERSHIP                          */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    /// @notice Transfers ownership to new address
-    /// @dev Only callable by current owner
-    /// @param newOwner Address of new owner
-    function transferOwnership(address newOwner) public onlyOwner {
+    function _approve(address owner_, address spender, uint256 amount) internal virtual {
         assembly {
-            ///Revert if new owner is zero address
-            if iszero(newOwner) {
-                mstore(0x00, 0xc5723b51) ///InvalidAddress()
-                revert(0x1c, 0x04)
-            }
-            let previousOwner := caller()
-            ///Update owner storage slot
-            sstore(1, newOwner)
-            ///Emit OwnershipTransferred(previousOwner, newOwner)
-            log3(
-                0x00,
-                0x00,
-                0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0, ///keccak256("OwnershipTransferred(address,address)")
-                previousOwner,
-                newOwner
-            )
-        }
-    }
-
-    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
-    /*                            BURN                            */
-    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
-
-    /// @notice Burns tokens from caller's balance
-    /// @dev Decreases total supply
-    /// @param amount Amount of tokens to burn
-    function burn(uint256 amount) public {
-        assembly {
-            let sender := caller()
-
-            ///Load sender balance: keccak256(abi.encode(sender, 2))
-            mstore(0x00, sender)
-            mstore(0x20, 2)
-            let senderBalanceSlot := keccak256(0x00, 0x40)
-            let senderBalance := sload(senderBalanceSlot)
-
-            ///Revert if insufficient balance
-            if lt(senderBalance, amount) {
-                mstore(0x00, 0xf4d678b8) ///InsufficientBalance()
-                revert(0x1c, 0x04)
-            }
-
-            ///Update sender balance
-            sstore(senderBalanceSlot, sub(senderBalance, amount))
-
-            ///Update total supply (underflow impossible due to balance check)
-            let totalSupplyBefore := sload(0x00)
-            sstore(0x00, sub(totalSupplyBefore, amount))
-
-            ///Emit Transfer(sender, address(0), amount)
+            ///Compute allowance slot: keccak256(spender, keccak256(owner_, 3))
+            mstore(0x00, owner_)
+            mstore(0x20, 3)
+            let innerSlot := keccak256(0x00, 0x40)
+            mstore(0x00, spender)
+            mstore(0x20, innerSlot)
+            let allowanceSlot := keccak256(0x00, 0x40)
+            sstore(allowanceSlot, amount)
+            ///Emit Approval(owner_, spender, amount)
             mstore(0x00, amount)
             log3(
                 0x00,
                 0x20,
-                0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,
-                sender,
-                0x0000000000000000000000000000000000000000
+                0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925,
+                owner_,
+                spender
             )
         }
     }
 
-    /// @notice Burns tokens from specified address using caller's allowance
-    /// @dev Decreases both allowance and total supply
-    /// @param from Address to burn tokens from
-    /// @param amount Amount of tokens to burn
-    function burnFrom(address from, uint256 amount) public {
+    function _spendAllowance(address owner_, address spender, uint256 amount) internal virtual {
         assembly {
-            let spender := caller()
-
-            ///Revert if from is zero address
-            if iszero(from) {
-                mstore(0x00, 0xc5723b51) ///InvalidAddress()
-                revert(0x1c, 0x04)
-            }
-
-            ///Compute and check allowance: keccak256(spender, keccak256(from, 3))
-            mstore(0x00, from)
+            ///Compute allowance slot: keccak256(spender, keccak256(owner_, 3))
+            mstore(0x00, owner_)
             mstore(0x20, 3)
             let innerSlot := keccak256(0x00, 0x40)
             mstore(0x00, spender)
             mstore(0x20, innerSlot)
             let allowanceSlot := keccak256(0x00, 0x40)
             let currentAllowance := sload(allowanceSlot)
-
-            ///Update allowance (skip if max uint256)
+            ///Skip if max uint256 (infinite approval)
             if iszero(
                 eq(
                     currentAllowance,
@@ -425,27 +407,120 @@ contract navySeal {
                 }
                 sstore(allowanceSlot, sub(currentAllowance, amount))
             }
+        }
+    }
 
-            ///Load from balance: keccak256(abi.encode(from, 2))
+    function _requireValidAuthorization(
+        address authorizer,
+        bytes32 nonce,
+        uint256 validAfter,
+        uint256 validBefore
+    ) internal view virtual {
+        if (block.timestamp < validAfter) revert AuthorizationNotYetValid();
+        if (block.timestamp > validBefore) revert AuthorizationExpired();
+        if (authorizationState[authorizer][nonce]) revert AuthorizationAlreadyUsed();
+    }
+
+    function _validateSignature(
+        address signer,
+        bytes32 structHash,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) internal view virtual {
+        bytes32 digest = keccak256(abi.encodePacked("\\x19\\x01", DOMAIN_SEPARATOR, structHash));
+        address recovered = ecrecover(digest, v, r, s);
+        if (recovered == address(0) || recovered != signer) revert InvalidSignature();
+    }
+
+    function _markAuthorizationAsUsed(address authorizer, bytes32 nonce) internal virtual {
+        assembly {
+            ///Compute authorizationState slot: keccak256(nonce, keccak256(authorizer, 5))
+            mstore(0x00, authorizer)
+            mstore(0x20, 5)
+            let innerSlot := keccak256(0x00, 0x40)
+            mstore(0x00, nonce)
+            mstore(0x20, innerSlot)
+            let stateSlot := keccak256(0x00, 0x40)
+            sstore(stateSlot, 1)
+        }
+    }
+
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                         MINT / BURN                        */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    function mint(address to, uint256 amount) public onlyOwner {
+        assembly {
+            if iszero(to) {
+                mstore(0x00, 0xc5723b51) ///InvalidAddress()
+                revert(0x1c, 0x04)
+            }
+            let totalSupplyBefore := sload(0x00)
+            let totalSupplyAfter := add(totalSupplyBefore, amount)
+            if lt(totalSupplyAfter, totalSupplyBefore) {
+                mstore(0x00, 0xe5cfe957) ///TotalSupplyOverflow()
+                revert(0x1c, 0x04)
+            }
+            sstore(0x00, totalSupplyAfter)
+            mstore(0x00, to)
+            mstore(0x20, 2)
+            let toBalanceSlot := keccak256(0x00, 0x40)
+            sstore(toBalanceSlot, add(sload(toBalanceSlot), amount))
+            mstore(0x00, amount)
+            log3(
+                0x00,
+                0x20,
+                0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,
+                0x0000000000000000000000000000000000000000,
+                to
+            )
+        }
+    }
+
+    function burn(uint256 amount) public {
+        assembly {
+            let sender := caller()
+            mstore(0x00, sender)
+            mstore(0x20, 2)
+            let senderBalanceSlot := keccak256(0x00, 0x40)
+            let senderBalance := sload(senderBalanceSlot)
+            if lt(senderBalance, amount) {
+                mstore(0x00, 0xf4d678b8) ///InsufficientBalance()
+                revert(0x1c, 0x04)
+            }
+            sstore(senderBalanceSlot, sub(senderBalance, amount))
+            let totalSupplyBefore := sload(0x00)
+            sstore(0x00, sub(totalSupplyBefore, amount))
+            mstore(0x00, amount)
+            log3(
+                0x00,
+                0x20,
+                0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef,
+                sender,
+                0x0000000000000000000000000000000000000000
+            )
+        }
+    }
+
+    function burnFrom(address from, uint256 amount) public {
+        _spendAllowance(from, msg.sender, amount);
+        assembly {
+            if iszero(from) {
+                mstore(0x00, 0xc5723b51) ///InvalidAddress()
+                revert(0x1c, 0x04)
+            }
             mstore(0x00, from)
             mstore(0x20, 2)
             let fromBalanceSlot := keccak256(0x00, 0x40)
             let fromBalance := sload(fromBalanceSlot)
-
-            ///Revert if insufficient balance
             if lt(fromBalance, amount) {
                 mstore(0x00, 0xf4d678b8) ///InsufficientBalance()
                 revert(0x1c, 0x04)
             }
-
-            ///Update from balance
             sstore(fromBalanceSlot, sub(fromBalance, amount))
-
-            ///Update total supply
             let totalSupplyBefore := sload(0x00)
             sstore(0x00, sub(totalSupplyBefore, amount))
-
-            ///Emit Transfer(from, address(0), amount)
             mstore(0x00, amount)
             log3(
                 0x00,
@@ -457,20 +532,36 @@ contract navySeal {
         }
     }
 
-    /// @notice Renounces ownership of the contract
-    /// @dev Only callable by current owner. Sets owner to zero address permanently
-    function renounceOwnership() public onlyOwner {
+    /*´:°•.°+.*•´.*:˚.°*.˚•´.°:°•.°•.*•´.*:˚.°*.˚•´.°:°•.°+.*•´.*:*/
+    /*                         OWNERSHIP                          */
+    /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
+
+    function transferOwnership(address newOwner) public onlyOwner {
         assembly {
+            if iszero(newOwner) {
+                mstore(0x00, 0xc5723b51) ///InvalidAddress()
+                revert(0x1c, 0x04)
+            }
             let previousOwner := sload(1)
-
-            ///Set owner to zero address
-            sstore(1, 0)
-
-            ///Emit OwnershipTransferred(previousOwner, address(0))
+            sstore(1, newOwner)
             log3(
                 0x00,
                 0x00,
-                0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0, ///keccak256("OwnershipTransferred(address,address)")
+                0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0,
+                previousOwner,
+                newOwner
+            )
+        }
+    }
+
+    function renounceOwnership() public onlyOwner {
+        assembly {
+            let previousOwner := sload(1)
+            sstore(1, 0)
+            log3(
+                0x00,
+                0x00,
+                0x8be0079c531659141344cd1fd0a4f28419497f9722a3daafe3b4186f6b6457e0,
                 previousOwner,
                 0x0000000000000000000000000000000000000000
             )
@@ -481,27 +572,12 @@ contract navySeal {
     /*                            EVENTS                          */
     /*.•°:°.´+˚.*°.˚:*.´•*.+°.•°:´*.´•*.•°.•°:°.´:•˚°.*°.˚:*.´+°.•*/
 
-    /// @dev Emitted when tokens are approved for spending
-    /// @param owner Token owner granting approval
-    /// @param spender Address granted spending rights
-    /// @param amount Amount of tokens approved
-    event Approval(
-        address indexed owner,
-        address indexed spender,
-        uint256 amount
-    );
-
-    /// @dev Emitted when tokens are transferred
-    /// @param from Sender address (zero address for minting)
-    /// @param to Recipient address (zero address for burning)
-    /// @param amount Amount of tokens transferred
+    event Approval(address indexed owner, address indexed spender, uint256 amount);
     event Transfer(address indexed from, address indexed to, uint256 amount);
-
-    /// @dev Emitted when ownership is transferred
-    /// @param previousOwner Previous owner address
-    /// @param newOwner New owner address
-    event OwnershipTransferred(
-        address indexed previousOwner,
-        address indexed newOwner
-    );
+    event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event AuthorizationCanceled(address indexed authorizer, bytes32 indexed nonce);
 }
+'''
+
+print(f"Contract length: {len(contract_code)} characters")
+print("Contract generated successfully!")
